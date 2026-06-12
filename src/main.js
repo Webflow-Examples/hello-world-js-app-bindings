@@ -1,4 +1,7 @@
+import './sentry.js';
 import './style.css';
+
+import * as Sentry from '@sentry/browser';
 
 const FRAMEWORK = 'Vite Vanilla JS';
 
@@ -104,6 +107,87 @@ function bindingCard(b, svc, status) {
     </div>`;
 }
 
+const PING_INTERVAL_MS = 30_000;
+
+/** UI state for the Sentry demo block (re-read on every render). */
+const sentryState = { pingCount: 0, lastPing: 'waiting…' };
+
+/**
+ * "Sentry demo" block, rendered after the bindings-status section.
+ * Calls /api/sentry-ping on load and every 30s. Each round trip produces:
+ *  - a server-side Sentry log (emitted inside the worker route), and
+ *  - a browser-side Sentry log (emitted in sentryPing below).
+ * The buttons trigger a client / server error to verify error capture.
+ */
+function sentrySection() {
+  if (!import.meta.env.VITE_SENTRY_DSN) {
+    return `
+      <section aria-label="Sentry status" style="margin-top: 32px">
+        <p class="wf-subtitle">
+          Sentry is not configured — set <code>VITE_SENTRY_DSN</code> (browser)
+          and <code>SENTRY_DSN</code> (worker) in your environment variables to enable it.
+        </p>
+      </section>`;
+  }
+  return `
+    <section aria-label="Sentry status" style="margin-top: 32px">
+      <p class="wf-subtitle">
+        Sentry demo · pings <code>/api/sentry-ping</code> every ${PING_INTERVAL_MS / 1000}s ·
+        pings sent: <span id="sentry-ping-count">${sentryState.pingCount}</span> ·
+        last: <span id="sentry-ping-last">${sentryState.lastPing}</span>
+      </p>
+      <div class="wf-cta" style="margin-top: 12px">
+        <button id="sentry-client-error" class="wf-btn wf-btn-ghost" type="button">
+          Trigger client error
+        </button>
+        <button id="sentry-server-error" class="wf-btn wf-btn-ghost" type="button">
+          Trigger server error
+        </button>
+      </div>
+    </section>`;
+}
+
+/** Re-attached on every render (innerHTML wipes listeners). */
+function attachSentryListeners() {
+  document.getElementById('sentry-client-error')?.addEventListener('click', () => {
+    throw new Error('sentry-ping: intentional test error (browser)');
+  });
+  document.getElementById('sentry-server-error')?.addEventListener('click', () => {
+    void fetch(buildAppUrl('api/sentry-ping?error=1'));
+  });
+}
+
+function updateSentryUi() {
+  const count = document.getElementById('sentry-ping-count');
+  const last = document.getElementById('sentry-ping-last');
+  if (count) count.textContent = String(sentryState.pingCount);
+  if (last) last.textContent = sentryState.lastPing;
+}
+
+async function sentryPing() {
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(buildAppUrl('api/sentry-ping'));
+    const body = await res.json();
+
+    Sentry.logger.info('client: sentry-ping completed', {
+      status: res.status,
+      durationMs: Date.now() - startedAt,
+      serverTime: body.requestedAt ?? 'unknown',
+    });
+
+    sentryState.pingCount += 1;
+    sentryState.lastPing = new Date().toLocaleTimeString();
+  } catch (e) {
+    Sentry.logger.error('client: sentry-ping failed', {
+      durationMs: Date.now() - startedAt,
+      message: e instanceof Error ? e.message : String(e),
+    });
+    sentryState.lastPing = 'failed — see console / Sentry';
+  }
+  updateSentryUi();
+}
+
 function render({ data, error } = {}) {
   const app = document.getElementById('app');
   app.className = 'wf-page';
@@ -160,6 +244,8 @@ function render({ data, error } = {}) {
       </div>
       <div class="wf-bindings">${bindingsHtml}</div>
 
+      ${sentrySection()}
+
       <section class="wf-cards" aria-label="Documentation" style="margin-top: 32px">
         ${DOC_LINKS.map(docCard).join('')}
       </section>
@@ -172,6 +258,8 @@ function render({ data, error } = {}) {
       </span>
     </footer>
   `;
+
+  attachSentryListeners();
 }
 
 /**
@@ -201,3 +289,8 @@ render();
     render({ error: e instanceof Error ? e.message : 'Unknown error' });
   }
 })();
+
+if (import.meta.env.VITE_SENTRY_DSN) {
+  void sentryPing();
+  setInterval(() => void sentryPing(), PING_INTERVAL_MS);
+}

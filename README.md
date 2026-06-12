@@ -48,6 +48,32 @@ npm run preview
 | `SESSIONS` | KV   | `wrangler.json` |
 | `FLAGS`    | KV   | `wrangler.json` |
 
+## Sentry integration (this branch)
+
+This branch adds a working [Sentry](https://docs.sentry.io/platforms/javascript/guides/cloudflare/) setup for Webflow Cloud:
+
+| File                           | Purpose                                                       |
+| ------------------------------ | ------------------------------------------------------------- |
+| `worker/index.js`              | Worker wrapped with `Sentry.withSentry` (`@sentry/cloudflare`) — traces + error capture on every request |
+| `worker/routes/sentry-ping.js` | Emits a server-side Sentry log on every request               |
+| `src/sentry.js`                | Browser init (`@sentry/browser`, logs + traces)               |
+| `src/main.js`                  | "Sentry demo" block: pings the API every 30s; emits a browser-side log per round trip; buttons to trigger test errors |
+
+### Setup
+
+1. Create a Sentry project and copy its DSN.
+2. Set **two** environment variables in your Webflow Cloud app:
+   - `VITE_SENTRY_DSN` — inlined into the browser bundle at build time.
+   - `SENTRY_DSN` — read by the worker at runtime.
+3. Deploy. Watch your Sentry project's **Logs** view: each 30s ping produces one `server:` and one `client:` log entry. Use the buttons to trigger test errors.
+
+> `@sentry/cloudflare` sends events with `fetch`, so it works on any worker
+> `compatibility_date` — no extra transport configuration needed (unlike
+> Node-transport SDKs such as `@sentry/nextjs`, which require
+> `compatibility_date >= 2025-08-16` on workerd).
+
+For local testing: `echo "SENTRY_DSN=<dsn>" > .dev.vars` then `VITE_SENTRY_DSN=<dsn> npm run preview`.
+
 ## Learn more
 
 - [Webflow Cloud docs](https://developers.webflow.com/webflow-cloud)
